@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Casino Royale: Red Alert</title>
+    <style>
+        :root { --gold: #ffd700; --wood: #5d3a1a; --red: #ff0000; --screen: #ff0000; }
+        body { 
+            background: #111 url('https://unsplash.com') center/cover;
+            color: var(--red); font-family: 'Courier New', Courier, monospace; overflow: hidden;
+            display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;
+            perspective: 1200px;
+        }
+
+        #game-viewport { display: flex; align-items: flex-end; gap: 30px; transform-style: preserve-3d; transition: filter 0.3s, transform 0.5s; }
+        .side-shelf { width: 100px; height: 350px; border-bottom: 12px solid var(--wood); display: flex; flex-direction: column-reverse; align-items: center; gap: 10px; background: rgba(0,0,0,0.6); border-radius: 10px; border: 1px solid var(--red); }
+        
+        .machine-container {
+            background: linear-gradient(135deg, #222, #000);
+            padding: 25px; border-radius: 20px; border: 10px solid var(--red);
+            box-shadow: 0 40px 100px rgba(255,0,0,0.3); transform: rotateY(-5deg);
+        }
+        
+        .payout-screen { background: #1a0000; color: var(--red); padding: 10px; border: 3px solid #444; margin-bottom: 15px; border-radius: 5px; font-weight: bold; min-height: 40px; display: flex; align-items: center; justify-content: center; text-align: center; text-shadow: 0 0 5px var(--red); }
+        .reels-casing { background: #000; padding: 15px; border-radius: 10px; border: 3px solid #333; }
+        .reels { display: flex; gap: 8px; justify-content: center; min-width: 300px; }
+        .reel { width: 70px; height: 90px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: black; font-weight: bold; font-size: 2rem;}
+        
+        .lever-hitbox { width: 60px; height: 180px; cursor: pointer; }
+        .lever-arm { width: 18px; height: 120px; background: #444; margin: 0 auto; border-radius: 10px; position: relative; transform-origin: bottom; transition: 0.15s; border: 1px solid var(--red); }
+        .lever-knob { width: 45px; height: 45px; background: var(--red); border-radius: 50%; position: absolute; top: -30px; left: -14px; box-shadow: 0 0 15px var(--red); }
+        .lever-arm.pulled { transform: rotateX(70deg) scaleY(0.4); }
+
+        /* Kick Out Screen */
+        #kick-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; color: var(--red); display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 9999; text-align: center;
+        }
+        .bouncer-hand { font-size: 12rem; animation: punch 0.4s infinite alternate; filter: drop-shadow(0 0 20px red); }
+        
+        .dizzy { animation: sway 4s infinite ease-in-out; filter: blur(3px) sepia(1) hue-rotate(-50deg); }
+        @keyframes sway { 0%, 100% { transform: rotateZ(0deg); } 50% { transform: rotateZ(4deg) scale(1.05); } }
+        
+        .modal { position: fixed; top: 30%; left: 50%; transform: translateX(-50%); background: #111; color: var(--red); padding: 25px; border-radius: 15px; border: 6px solid var(--red); display: none; z-index: 1500; box-shadow: 0 0 50px red; }
+        button { cursor: pointer; padding: 10px; font-weight: bold; border-radius: 5px; border: 1px solid var(--red); background: #000; color: var(--red); margin: 5px; }
+        button:hover { background: var(--red); color: black; }
+    </style>
+</head>
+<body>
+
+<div id="game-viewport">
+    <div id="drink-shelf" class="side-shelf"></div>
+    <div class="machine-container">
+        <div class="payout-screen" id="status-screen">SYSTEM ONLINE</div>
+        <div class="reels-casing"><div id="reels-container" class="reels"></div></div>
+        <div style="margin-top:20px; font-size:1.8rem; text-align:center;">BANK: $<span id="balance">500</span></div>
+        <div id="alert-msg" style="color:var(--red); font-size:0.7rem; margin-top:5px; height:10px; font-weight: bold;"></div>
+    </div>
+    <div class="lever-hitbox" onclick="pullLever()">
+        <div id="lever-arm" class="lever-arm"><div class="lever-knob"></div></div>
+    </div>
+    <div id="food-shelf" class="side-shelf"></div>
+</div>
+
+<div id="kick-screen">
+    <div class="bouncer-hand">👊</div>
+    <h1 style="font-size: 3.5rem; margin: 10px 0;">ACCESS REVOKED</h1>
+    <p id="kick-reason" style="font-size: 1.5rem; color: #600;"></p>
+    <p id="robbed-amt" style="font-size: 2.2rem; margin: 20px 0;"></p>
+    <button onclick="location.reload()">REBOOT SYSTEM ($0)</button>
+</div>
+
+<div id="bartender-modal" class="modal">
+    <h3>🤵 BARTENDER</h3>
+    <p>"Sobering up is for losers."</p>
+    <button onclick="buyDrink()">WHISKEY ($5)</button>
+    <button onclick="closeModal('bartender-modal')">DISMISS</button>
+</div>
+
+<script>
+    let balance = 500;
+    let isDrunk = false;
+    let clickTimes = [];
+    let spinning = false;
+
+    function buildReels() {
+        const container = document.getElementById('reels-container');
+        container.innerHTML = '';
+        for(let i=0; i<3; i++) {
+            container.innerHTML += `<div class="reel" id="r${i}">7</div>`;
+        }
+    }
+
+    async function pullLever() {
+        const now = Date.now();
+        clickTimes.push(now);
+        clickTimes = clickTimes.filter(t => now - t < 2000);
+
+        let limit = isDrunk ? 3 : 6; 
+        if (clickTimes.length > limit) {
+            kickOut(isDrunk ? "DRUNK & DISORDERLY" : "MECHANICAL ABUSE DETECTED");
+            return;
+        }
+
+        if (spinning || balance < 10) return;
+        spinning = true;
+        balance -= 10;
+        document.getElementById('balance').innerText = balance;
+        document.getElementById('lever-arm').classList.add('pulled');
+        setTimeout(()=>document.getElementById('lever-arm').classList.remove('pulled'), 150);
+
+        // LUCK ADJUSTED: 65% Force Win chance
+        const forceWin = Math.random() < 0.65;
+        const res = [];
+        for(let i=0; i<3; i++) {
+            document.getElementById(`r${i}`).style.filter = 'blur(10px)';
+            let sym = forceWin ? '7' : (Math.random() > 0.5 ? '7' : 'BAR');
+            res.push(sym);
+            await new Promise(r => setTimeout(r, 100 + (i*100)));
+            document.getElementById(`r${i}`).style.filter = 'none';
+            document.getElementById(`r${i}`).innerText = sym;
+        }
+        
+        if(res.every(v => v === res)) {
+            balance += 100;
+            updateScreen("WIN +$100", "var(--red)");
+        } else {
+            balance += 5; // Pity prize
+            updateScreen("SMALL GAIN +$5", "var(--red)");
+        }
+        document.getElementById('balance').innerText = balance;
+        spinning = false;
+    }
+
+    function updateScreen(text, color) {
+        const s = document.getElementById('status-screen');
+        s.innerText = text;
+        s.style.color = color;
+    }
+
+    function buyDrink() {
+        if (balance < 5) return;
+        balance -= 5;
+        document.getElementById('balance').innerText = balance;
+        const glass = document.createElement('div');
+        glass.className = 'glass';
+        glass.style.cssText = "width:35px; height:55px; border:2px solid red; border-radius:0 0 10px 10px; cursor:pointer; position:relative; overflow:hidden;";
+        glass.innerHTML = '<div style="background:darkred; height:100%; width:100%;"></div>';
+        glass.onclick = function() { 
+            this.remove(); 
+            isDrunk = true;
+            document.getElementById('game-viewport').classList.add('dizzy');
+            document.getElementById('alert-msg').innerText = "!! BOUNCER AGGRO HIGH !!";
+        };
+        document.getElementById('drink-shelf').appendChild(glass);
+        closeModal('bartender-modal');
+    }
+
+    function kickOut(reason) {
+        const stolen = balance;
+        balance = 0;
+        document.getElementById('kick-screen').style.display = 'flex';
+        document.getElementById('kick-reason').innerText = reason;
+        document.getElementById('robbed-amt').innerText = "LOSS: $" + stolen;
+    }
+
+    setInterval(() => {
+        if(document.getElementById('kick-screen').style.display !== 'flex') {
+            document.getElementById('bartender-modal').style.display='block';
+        }
+    }, 60000);
+
+    function closeModal(id) { document.getElementById(id).style.display='none'; }
+    window.onload = buildReels;
+</script>
+</body>
+</html>
